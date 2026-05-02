@@ -901,7 +901,7 @@ function getCoverUrl($cover_buku) {
         <div class="footer-card">
             <h2 class="footer-title"><i class="fas fa-code"></i> Oleh Akhmad Da'wah</h2>
             <p style="margin-bottom:10px; opacity:0.9; color:white;">Informasi lebih lanjut? Kunjungi profil saya</p>
-            <a href="https://github.com/AhnRahmad" target="_blank" class="portal-btn">
+            <a href="https://github.com/DawahAhn" target="_blank" class="portal-btn">
                 <i class="fab fa-github"></i>
                 Kunjungi Portal Utama
             </a>
