@@ -1,14 +1,38 @@
 <?php
-// DEBUG MODE
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
+// DEBUG MODE - aktifkan saat development, matikan saat production
+// error_reporting(E_ALL);
+// ini_set('display_errors', 1);
 
 // Koneksi database
 include 'koneksi.php';
 
-// Ambil semua data buku dari database
-$query = "SELECT * FROM databuku";
+// ============================================================
+// PASTIKAN FOLDER UPLOADS ADA
+// ============================================================
+$uploadDir = __DIR__ . '/uploads';
+if (!is_dir($uploadDir)) {
+    mkdir($uploadDir, 0755, true);
+}
+
+// Cek apakah kolom cover_buku sudah ada di database
+$checkColumn = mysqli_query($conn, "SHOW COLUMNS FROM databuku LIKE 'cover_buku'");
+$hasCoverColumn = mysqli_num_rows($checkColumn) > 0;
+
+// Query dasar
+if ($hasCoverColumn) {
+    $query = "SELECT * FROM databuku";
+} else {
+    $query = "SELECT kode_buku, judul_buku, pengarang, penerbit, tahun_terbit, NULL as cover_buku FROM databuku";
+}
+
 $result = mysqli_query($conn, $query);
+
+// Jika query gagal (fallback)
+if (!$result) {
+    $query = "SELECT kode_buku, judul_buku, pengarang, penerbit, tahun_terbit, NULL as cover_buku FROM databuku";
+    $result = mysqli_query($conn, $query);
+}
+
 $totalBuku = mysqli_num_rows($result);
 
 // Simpan data buku ke array PHP
@@ -17,43 +41,135 @@ while ($row = mysqli_fetch_assoc($result)) {
     $books[] = $row;
 }
 
-// Handle Tambah Buku
+// ============================================================
+// HANDLE TAMBAH BUKU
+// ============================================================
 if (isset($_POST['action']) && $_POST['action'] == 'tambah') {
-    $kode_buku   = mysqli_real_escape_string($conn, $_POST['kode_buku']);
-    $judul_buku  = mysqli_real_escape_string($conn, $_POST['judul_buku']);
-    $pengarang   = mysqli_real_escape_string($conn, $_POST['pengarang']);
-    $penerbit    = mysqli_real_escape_string($conn, $_POST['penerbit']);
+    $kode_buku    = mysqli_real_escape_string($conn, $_POST['kode_buku']);
+    $judul_buku   = mysqli_real_escape_string($conn, $_POST['judul_buku']);
+    $pengarang    = mysqli_real_escape_string($conn, $_POST['pengarang']);
+    $penerbit     = mysqli_real_escape_string($conn, $_POST['penerbit']);
     $tahun_terbit = mysqli_real_escape_string($conn, $_POST['tahun_terbit']);
-    $sql = "INSERT INTO databuku (kode_buku, judul_buku, pengarang, penerbit, tahun_terbit)
-            VALUES ('$kode_buku', '$judul_buku', '$pengarang', '$penerbit', '$tahun_terbit')";
+    
+    // Handle file upload
+    $cover_buku = null;
+    if (isset($_FILES['cover_buku']) && $_FILES['cover_buku']['error'] == 0) {
+        $allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+        $filename = $_FILES['cover_buku']['name'];
+        $filetype = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        
+        if (in_array($filetype, $allowed)) {
+            // Generate nama unik
+            $newname = 'cover_' . time() . '_' . rand(1000, 9999) . '.' . $filetype;
+            $uploadpath = $uploadDir . '/' . $newname;
+            
+            if (move_uploaded_file($_FILES['cover_buku']['tmp_name'], $uploadpath)) {
+                $cover_buku = $newname;
+            }
+        }
+    }
+    
+    if ($hasCoverColumn) {
+        $sql = "INSERT INTO databuku (kode_buku, judul_buku, pengarang, penerbit, tahun_terbit, cover_buku)
+                VALUES ('$kode_buku', '$judul_buku', '$pengarang', '$penerbit', '$tahun_terbit', " . ($cover_buku ? "'$cover_buku'" : "NULL") . ")";
+    } else {
+        $sql = "INSERT INTO databuku (kode_buku, judul_buku, pengarang, penerbit, tahun_terbit)
+                VALUES ('$kode_buku', '$judul_buku', '$pengarang', '$penerbit', '$tahun_terbit')";
+    }
+    
     mysqli_query($conn, $sql);
     header("Location: index.php?toast=tambah");
     exit();
 }
 
-// Handle Edit Buku
+// ============================================================
+// HANDLE EDIT BUKU
+// ============================================================
 if (isset($_POST['action']) && $_POST['action'] == 'edit') {
-    $kode_buku   = mysqli_real_escape_string($conn, $_POST['kode_buku']);
-    $judul_buku  = mysqli_real_escape_string($conn, $_POST['judul_buku']);
-    $pengarang   = mysqli_real_escape_string($conn, $_POST['pengarang']);
-    $penerbit    = mysqli_real_escape_string($conn, $_POST['penerbit']);
+    $kode_buku    = mysqli_real_escape_string($conn, $_POST['kode_buku']);
+    $judul_buku   = mysqli_real_escape_string($conn, $_POST['judul_buku']);
+    $pengarang    = mysqli_real_escape_string($conn, $_POST['pengarang']);
+    $penerbit     = mysqli_real_escape_string($conn, $_POST['penerbit']);
     $tahun_terbit = mysqli_real_escape_string($conn, $_POST['tahun_terbit']);
-    $old_kode    = mysqli_real_escape_string($conn, $_POST['old_kode']);
-    $sql = "UPDATE databuku SET kode_buku='$kode_buku', judul_buku='$judul_buku',
-            pengarang='$pengarang', penerbit='$penerbit', tahun_terbit='$tahun_terbit'
-            WHERE kode_buku='$old_kode'";
+    $old_kode     = mysqli_real_escape_string($conn, $_POST['old_kode']);
+    
+    // Handle file upload untuk edit
+    $cover_update = "";
+    if (isset($_FILES['cover_buku']) && $_FILES['cover_buku']['error'] == 0) {
+        $allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+        $filename = $_FILES['cover_buku']['name'];
+        $filetype = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        
+        if (in_array($filetype, $allowed)) {
+            // Hapus cover lama jika ada
+            if ($hasCoverColumn) {
+                $oldQuery = "SELECT cover_buku FROM databuku WHERE kode_buku='$old_kode'";
+                $oldResult = mysqli_query($conn, $oldQuery);
+                if ($oldResult && $oldRow = mysqli_fetch_assoc($oldResult)) {
+                    if (!empty($oldRow['cover_buku']) && file_exists($uploadDir . '/' . $oldRow['cover_buku'])) {
+                        unlink($uploadDir . '/' . $oldRow['cover_buku']);
+                    }
+                }
+            }
+            
+            $newname = 'cover_' . time() . '_' . rand(1000, 9999) . '.' . $filetype;
+            $uploadpath = $uploadDir . '/' . $newname;
+            
+            if (move_uploaded_file($_FILES['cover_buku']['tmp_name'], $uploadpath)) {
+                $cover_update = ", cover_buku='$newname'";
+            }
+        }
+    }
+    
+    if ($hasCoverColumn && !empty($cover_update)) {
+        $sql = "UPDATE databuku SET kode_buku='$kode_buku', judul_buku='$judul_buku',
+                pengarang='$pengarang', penerbit='$penerbit', tahun_terbit='$tahun_terbit'$cover_update
+                WHERE kode_buku='$old_kode'";
+    } else {
+        $sql = "UPDATE databuku SET kode_buku='$kode_buku', judul_buku='$judul_buku',
+                pengarang='$pengarang', penerbit='$penerbit', tahun_terbit='$tahun_terbit'
+                WHERE kode_buku='$old_kode'";
+    }
+    
     mysqli_query($conn, $sql);
     header("Location: index.php?toast=edit");
     exit();
 }
 
-// Handle Hapus Buku
+// ============================================================
+// HANDLE HAPUS BUKU
+// ============================================================
 if (isset($_GET['hapus'])) {
     $kode = mysqli_real_escape_string($conn, $_GET['hapus']);
+    
+    // Hapus file cover jika ada
+    if ($hasCoverColumn) {
+        $coverQuery = "SELECT cover_buku FROM databuku WHERE kode_buku='$kode'";
+        $coverResult = mysqli_query($conn, $coverQuery);
+        if ($coverResult && $coverRow = mysqli_fetch_assoc($coverResult)) {
+            if (!empty($coverRow['cover_buku']) && file_exists($uploadDir . '/' . $coverRow['cover_buku'])) {
+                unlink($uploadDir . '/' . $coverRow['cover_buku']);
+            }
+        }
+    }
+    
     $sql = "DELETE FROM databuku WHERE kode_buku='$kode'";
     mysqli_query($conn, $sql);
     header("Location: index.php?toast=hapus");
     exit();
+}
+
+// ============================================================
+// FUNGSI HELPER: Dapatkan URL cover
+// ============================================================
+function getCoverUrl($cover_buku) {
+    $uploadDir = __DIR__ . '/uploads';
+    $defaultCover = 'https://images.unsplash.com/photo-1481627834876-b7833e8f5570?w=200';
+    
+    if (!empty($cover_buku) && file_exists($uploadDir . '/' . $cover_buku)) {
+        return 'uploads/' . $cover_buku;
+    }
+    return $defaultCover;
 }
 ?>
 <!DOCTYPE html>
@@ -89,20 +205,6 @@ if (isset($_GET['hapus'])) {
             color: #e2e8f0;
         }
         .container { max-width: 1400px; margin: 0 auto; }
-        body.mobile-mode .container { max-width: 480px; }
-        body.mobile-mode .control-panel { flex-direction: column; }
-        body.mobile-mode .search-box { min-width: 100%; }
-        body.mobile-mode .section-header { flex-direction: column; text-align: center; }
-        body.mobile-mode .stats-bar { flex-direction: column; align-items: center; }
-        body.mobile-mode .book-table thead { display: none; }
-        body.mobile-mode .book-row { display: block; margin-bottom: 20px; border: 2px solid var(--primary-gold); }
-        body.mobile-mode .book-row td { display: flex; justify-content: space-between; align-items: center; padding: 15px; border-bottom: 1px solid #e2e8f0; }
-        body.mobile-mode .book-row td::before { font-weight: 700; color: var(--secondary-blue); margin-right: 15px; }
-        body.mobile-mode .book-row td:first-child::before { content: "No:"; }
-        body.mobile-mode .book-row td:nth-child(2)::before { content: "Buku:"; }
-        body.mobile-mode .book-row td:nth-child(3)::before { content: "Tahun:"; }
-        body.mobile-mode .book-row td:nth-child(4)::before { content: "Penerbit:"; }
-        body.mobile-mode .book-row td:last-child::before { content: "Aksi:"; }
         /* Header */
         .header {
             text-align: center; margin-bottom: 40px; padding: 40px;
@@ -225,7 +327,27 @@ if (isset($_GET['hapus'])) {
             font-weight: 800; font-size: 16px; margin: 0 auto;
         }
         .book-title-cell { display: flex; align-items: center; gap: 20px; }
-        .book-cover { width: 75px; height: 100px; object-fit: cover; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
+        
+        /* ============================================
+           STYLING COVER BUKU - DI PERBAIKI
+           ============================================ */
+        .book-cover {
+            width: 75px; 
+            height: 100px; 
+            object-fit: cover; 
+            border-radius: 10px; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            cursor: pointer;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .book-cover:hover {
+            transform: scale(1.08);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+        }
+        .book-cover.has-image {
+            border: 3px solid var(--primary-gold);
+        }
+        
         .book-info h3 { font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 5px; }
         body.dark-mode .book-info h3 { color: #f1f5f9; }
         .book-info p { font-size: 13px; color: #64748b; }
@@ -249,9 +371,10 @@ if (isset($_GET['hapus'])) {
         /* Modal */
         .modal-overlay {
             display: none; position: fixed; inset: 0;
-            background: rgba(0,0,0,0.6); z-index: 1000;
+            background: rgba(0,0,0,0.7); z-index: 1000;
             align-items: center; justify-content: center;
             backdrop-filter: blur(8px);
+            padding: 20px;
         }
         .modal-overlay.active { display: flex; }
         .modal-content {
@@ -277,6 +400,32 @@ if (isset($_GET['hapus'])) {
         }
         body.dark-mode .form-input, body.dark-mode .form-select { background: #374151; border-color: #4b5563; color: #f9fafb; }
         .form-input:focus, .form-select:focus { outline: none; border-color: var(--secondary-gold); }
+        .cover-input {
+            padding: 20px;
+            border: 2px dashed #e5e7eb;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #f9fafb;
+        }
+        .cover-input:hover {
+            border-color: var(--secondary-gold);
+            background: #f0fdf4;
+        }
+        body.dark-mode .cover-input {
+            background: #374151;
+            border-color: #4b5563;
+        }
+        body.dark-mode .cover-input:hover {
+            background: #1f2937;
+            border-color: var(--secondary-gold);
+        }
+        .cover-upload-wrapper small {
+            font-size: 13px !important;
+        }
+        body.dark-mode .cover-upload-wrapper small {
+            color: #cbd5e1 !important;
+        }
         .form-actions { display: flex; gap: 15px; margin-top: 30px; justify-content: flex-end; }
         .btn-primary { background: linear-gradient(135deg, var(--secondary-blue), var(--accent-blue)); color: white; border: none; padding: 13px 30px; border-radius: 12px; font-weight: 700; cursor: pointer; font-size: 15px; display: flex; align-items: center; gap: 8px; font-family: 'Plus Jakarta Sans', sans-serif; }
         .btn-secondary { background: #f1f5f9; color: #374151; border: 2px solid #e5e7eb; padding: 13px 30px; border-radius: 12px; font-weight: 700; cursor: pointer; font-size: 15px; display: flex; align-items: center; gap: 8px; font-family: 'Plus Jakarta Sans', sans-serif; }
@@ -306,28 +455,317 @@ if (isset($_GET['hapus'])) {
         /* Delete Modal */
         .delete-icon { font-size: 60px; color: #ef4444; text-align: center; margin-bottom: 20px; }
         .delete-text { text-align: center; color: #64748b; margin-bottom: 10px; }
-        @media (max-width: 968px) {
+        
+        /* ============================================
+           MODAL PREVIEW COVER - DI PERBAIKI
+           ============================================ */
+        .modal-preview-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.85);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+        }
+        .modal-preview-overlay.active {
+            display: flex;
+        }
+        .modal-preview-content {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            max-width: 500px;
+            width: 100%;
+            position: relative;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.5);
+            border: 3px solid var(--primary-gold);
+            animation: zoomIn 0.3s ease;
+            text-align: center;
+        }
+        body.dark-mode .modal-preview-content { 
+            background: #1e293b; 
+        }
+        @keyframes zoomIn {
+            from { opacity: 0; transform: scale(0.8); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .btn-close-preview {
+            position: absolute;
+            top: -15px;
+            right: -15px;
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            border: 3px solid white;
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: white;
+            transition: all 0.3s ease;
+            z-index: 10;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        .btn-close-preview:hover {
+            transform: scale(1.1) rotate(90deg);
+        }
+        .preview-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+        .preview-cover-image {
+            width: 100%;
+            max-width: 350px;
+            height: auto;
+            max-height: 500px;
+            border-radius: 15px;
+            box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+            object-fit: contain;
+        }
+        .preview-info {
+            text-align: center;
+            width: 100%;
+        }
+        .preview-info h2 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 10px;
+        }
+        body.dark-mode .preview-info h2 { 
+            color: #f1f5f9; 
+        }
+        .preview-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, var(--secondary-blue), var(--accent-blue));
+            color: white;
+            padding: 6px 16px;
+            border-radius: 50px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        
+        /* Responsive Preview Modal */
+        @media (max-width: 768px) {
+            .modal-preview-content {
+                padding: 25px 20px;
+                max-width: 95%;
+            }
+            .preview-cover-image { 
+                max-width: 300px; 
+                max-height: 400px;
+            }
+            .preview-info h2 { 
+                font-size: 18px; 
+            }
+            .btn-close-preview { 
+                width: 40px; 
+                height: 40px; 
+                font-size: 18px;
+                top: -10px;
+                right: -10px;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .modal-preview-content {
+                padding: 20px 15px;
+                border-radius: 15px;
+            }
+            .preview-cover-image { 
+                max-width: 250px; 
+                max-height: 350px;
+            }
+            .preview-info h2 { 
+                font-size: 16px; 
+            }
+            .btn-close-preview { 
+                width: 36px; 
+                height: 36px; 
+                font-size: 16px; 
+                top: -8px; 
+                right: -8px; 
+            }
+        }
+        
+        /* RESPONSIVE MEDIA QUERIES */
+        @media (max-width: 1024px) {
+            .container { max-width: 95%; }
             h1 { font-size: 36px; }
-            .control-panel { flex-direction: column; }
+            .header { padding: 30px 25px; margin-bottom: 30px; }
+            .stat-item { padding: 15px 25px; min-width: 120px; }
+            .stat-number { font-size: 28px; }
+            .book-table thead th { padding: 14px 12px; font-size: 12px; }
+            .book-row td { padding: 15px 12px; }
+            .book-cover { width: 60px; height: 80px; }
+            .control-panel { gap: 15px; padding: 20px 25px; }
+            .settings-panel { gap: 8px; }
+        }
+        
+        @media (max-width: 768px) {
+            body { padding: 25px 15px; }
+            .container { max-width: 100%; }
+            h1 { font-size: 28px; }
+            .subtitle { font-size: 14px; }
+            .university-badge { padding: 6px 15px; font-size: 11px; }
+            .header { padding: 25px 20px; margin-bottom: 25px; border-radius: 20px; }
+            .settings-panel { position: relative; top: auto; right: auto; justify-content: center; margin-bottom: 20px; max-width: 100%; flex-wrap: wrap; gap: 8px; }
+            .toggle-btn, .action-btn { padding: 10px 15px; font-size: 12px; }
+            .stats-bar { gap: 20px; }
+            .stat-item { padding: 12px 20px; min-width: 100px; }
+            .stat-number { font-size: 24px; }
+            .stat-label { font-size: 11px; }
+            .control-panel { flex-direction: column; gap: 12px; padding: 18px 20px; }
             .search-box { min-width: 100%; }
-            .settings-panel { position: relative; top: auto; right: auto; justify-content: center; margin-bottom: 20px; max-width: 100%; }
+            .filter-select, .sort-select { min-width: 100%; }
+            .btn-add { width: 100%; justify-content: center; }
+            .table-section { padding: 25px 20px; }
+            .section-title { font-size: 20px; }
+            .book-table thead th { padding: 12px 8px; font-size: 11px; }
+            .book-row td { padding: 12px 8px; }
+            .book-cover { width: 50px; height: 70px; }
+            .book-info h3 { font-size: 14px; }
+            .book-info p { font-size: 12px; }
+            .action-buttons { gap: 8px; }
+            .btn-action { width: 36px; height: 36px; font-size: 14px; }
+            .modal-content { padding: 30px 20px; max-width: 95%; }
+            .modal-title { font-size: 18px; }
+            .form-input, .form-select { padding: 11px 15px; font-size: 14px; }
+            .form-label { font-size: 13px; }
+            .btn-primary, .btn-secondary { padding: 11px 20px; font-size: 14px; }
+            .toast { padding: 12px 20px; min-width: auto; max-width: 90vw; }
+            .footer-card { padding: 25px 20px; }
+            .footer-title { font-size: 18px; }
+            .portal-btn { font-size: 14px; padding: 12px 30px; }
+        }
+        
+        @media (max-width: 600px) {
+            body { padding: 20px 12px; }
+            h1 { font-size: 24px; margin-bottom: 8px; }
+            .subtitle { font-size: 13px; margin-bottom: 20px; }
+            .university-badge { padding: 5px 12px; font-size: 10px; letter-spacing: 1px; }
+            .header { padding: 20px 18px; margin-bottom: 20px; border-radius: 18px; }
+            .settings-panel { gap: 6px; margin-bottom: 15px; }
+            .toggle-btn, .action-btn { padding: 9px 12px; font-size: 11px; }
+            .stats-bar { gap: 15px; }
+            .stat-item { padding: 10px 18px; min-width: 90px; border: 2px solid var(--primary-gold); }
+            .stat-number { font-size: 22px; }
+            .stat-label { font-size: 10px; margin-top: 3px; }
+            .control-panel { gap: 10px; padding: 15px 18px; }
+            .search-box { min-width: 100%; }
+            .search-box i { left: 15px; font-size: 16px; }
+            .search-input { padding: 12px 15px 12px 40px; font-size: 14px; }
+            .filter-select, .sort-select { min-width: 100%; padding: 12px 15px; font-size: 13px; }
+            .btn-add { width: 100%; padding: 12px 20px; font-size: 14px; }
+            .table-section { padding: 20px 15px; border-radius: 20px; }
+            .section-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+            .section-title { font-size: 18px; }
+            .result-count { font-size: 13px; padding: 6px 12px; }
+            .book-table { border-spacing: 0 10px; }
+            .book-table thead th { padding: 10px 6px; font-size: 10px; }
+            .book-table thead th:first-child { width: 50px; }
+            .book-row td { padding: 10px 6px; font-size: 13px; }
+            .book-cover { width: 45px; height: 65px; }
+            .book-info h3 { font-size: 13px; margin-bottom: 3px; }
+            .book-info p { font-size: 11px; margin: 2px 0; }
+            .number-badge { width: 38px; height: 38px; font-size: 14px; }
+            .year-badge { padding: 5px 12px; font-size: 12px; }
+            .category-badge { padding: 4px 12px; font-size: 11px; }
+            .action-buttons { gap: 6px; }
+            .btn-action { width: 32px; height: 32px; font-size: 13px; }
+            .modal-overlay { padding: 20px 0; }
+            .modal-content { padding: 25px 18px; max-width: 100%; }
+            .modal-header { margin-bottom: 20px; }
+            .modal-title { font-size: 16px; gap: 8px; }
+            .btn-close { width: 36px; height: 36px; font-size: 16px; }
+            .form-group { margin-bottom: 15px; }
+            .form-label { font-size: 12px; margin-bottom: 6px; }
+            .form-input, .form-select { padding: 10px 14px; font-size: 14px; border-radius: 10px; }
+            .cover-input { padding: 15px; border-radius: 10px; }
+            .cover-upload-wrapper small { font-size: 12px !important; margin-top: 6px; }
+            .form-actions { flex-direction: column; gap: 10px; margin-top: 20px; }
+            .btn-primary, .btn-secondary { width: 100%; padding: 11px 16px; font-size: 13px; justify-content: center; }
+            .toast-container { bottom: 20px; right: 15px; gap: 8px; }
+            .toast { padding: 11px 15px; min-width: auto; max-width: calc(100vw - 40px); font-size: 13px; }
+            .toast i { font-size: 16px; }
+            .footer-card { margin-top: 30px; padding: 20px 15px; border-radius: 20px; }
+            .footer-title { font-size: 16px; margin-bottom: 10px; }
+            .portal-btn { font-size: 13px; padding: 11px 25px; }
+        }
+        
+        @media (max-width: 480px) {
+            body { padding: 15px 10px; }
+            h1 { font-size: 20px; }
+            .subtitle { font-size: 12px; margin-bottom: 15px; }
+            .university-badge { padding: 4px 10px; font-size: 9px; }
+            .header { padding: 15px 15px; margin-bottom: 15px; border-radius: 15px; }
+            .settings-panel { gap: 5px; margin-bottom: 12px; }
+            .toggle-btn, .action-btn { padding: 8px 10px; font-size: 10px; flex: 1; }
+            .stats-bar { gap: 10px; }
+            .stat-item { padding: 8px 12px; min-width: 70px; }
+            .stat-number { font-size: 18px; }
+            .stat-label { font-size: 9px; }
+            .control-panel { gap: 8px; padding: 12px 15px; }
+            .search-input { padding: 10px 12px 10px 35px; font-size: 13px; }
+            .search-box i { left: 12px; font-size: 14px; }
+            .filter-select, .sort-select { padding: 10px 12px; font-size: 12px; }
+            .btn-add { padding: 10px 15px; font-size: 13px; }
+            .table-section { padding: 15px 12px; }
+            .section-title { font-size: 16px; }
+            .book-table thead th { padding: 8px 5px; font-size: 9px; }
+            .book-table thead th:first-child { width: 45px; }
+            .book-row td { padding: 8px 5px; font-size: 12px; }
+            .book-cover { width: 40px; height: 60px; }
+            .book-info h3 { font-size: 12px; }
+            .book-info p { font-size: 10px; }
+            .number-badge { width: 35px; height: 35px; font-size: 12px; }
+            .year-badge { padding: 4px 10px; font-size: 11px; }
+            .category-badge { padding: 3px 10px; font-size: 10px; }
+            .action-buttons { gap: 5px; }
+            .btn-action { width: 30px; height: 30px; font-size: 12px; }
+            .modal-content { padding: 20px 15px; }
+            .modal-title { font-size: 15px; }
+            .btn-close { width: 32px; height: 32px; font-size: 14px; }
+            .form-label { font-size: 11px; }
+            .form-input, .form-select { padding: 9px 12px; font-size: 13px; }
+            .cover-input { padding: 12px; }
+            .btn-primary, .btn-secondary { padding: 10px 14px; font-size: 12px; }
+            .toast { padding: 10px 12px; font-size: 12px; min-width: auto; }
+            .no-result { padding: 40px 15px; }
+            .no-result i { font-size: 48px; }
+            .footer-card { margin-top: 25px; padding: 15px 12px; }
+            .footer-title { font-size: 14px; }
+            .portal-btn { font-size: 12px; padding: 10px 20px; }
+        }
+        
+        @media (min-width: 1920px) {
+            .container { max-width: 1600px; }
+            h1 { font-size: 56px; }
+            .book-cover { width: 90px; height: 120px; }
+            .stat-number { font-size: 44px; }
         }
     </style>
 </head>
 <body>
     <!-- Toast Container -->
     <div class="toast-container" id="toastContainer"></div>
+    
     <!-- Settings Panel -->
     <div class="settings-panel">
         <button class="toggle-btn" id="darkModeToggle" onclick="toggleDarkMode()">
             <i class="fas fa-moon"></i>
             <span>Dark Mode</span>
         </button>
-        <button class="toggle-btn" id="viewModeToggle" onclick="toggleViewMode()">
-            <i class="fas fa-mobile-alt"></i>
-            <span>Mode HP</span>
-        </button>
     </div>
+    
     <div class="container">
         <!-- Header -->
         <div class="header">
@@ -350,6 +788,7 @@ if (isset($_GET['hapus'])) {
                 </div>
             </div>
         </div>
+        
         <!-- Control Panel -->
         <div class="control-panel">
             <div class="search-box">
@@ -379,6 +818,7 @@ if (isset($_GET['hapus'])) {
                 Tambah Koleksi
             </button>
         </div>
+        
         <!-- Table Section -->
         <div class="table-section">
             <div class="section-header">
@@ -401,12 +841,10 @@ if (isset($_GET['hapus'])) {
                 </thead>
                 <tbody id="bookTableBody">
                     <?php
-                    $coverImages = [
-                        'default' => 'https://images.unsplash.com/photo-1481627834876-b7833e8f5570?w=200'
-                    ];
                     $no = 1;
                     foreach ($books as $book):
-                        $cover = $coverImages['default'];
+                        $cover = getCoverUrl($book['cover_buku']);
+                        $hasCustomCover = !empty($book['cover_buku']) && file_exists($uploadDir . '/' . $book['cover_buku']);
                     ?>
                     <tr class="book-row"
                         data-judul="<?php echo strtolower($book['judul_buku']); ?>"
@@ -418,7 +856,11 @@ if (isset($_GET['hapus'])) {
                         </td>
                         <td>
                             <div class="book-title-cell">
-                                <img src="<?php echo $cover; ?>" alt="Cover" class="book-cover">
+                                <img src="<?php echo $cover; ?>" 
+                                     alt="Cover <?php echo htmlspecialchars($book['judul_buku']); ?>" 
+                                     class="book-cover <?php echo $hasCustomCover ? 'has-image' : ''; ?>"
+                                     onclick="openCoverPreview('<?php echo htmlspecialchars($cover); ?>', '<?php echo htmlspecialchars(addslashes($book['judul_buku'])); ?>')"
+                                     title="Klik untuk melihat cover lebih jelas">
                                 <div class="book-info">
                                     <h3><?php echo htmlspecialchars($book['judul_buku']); ?></h3>
                                     <p><i class="fas fa-user"></i> <?php echo htmlspecialchars($book['pengarang']); ?></p>
@@ -454,6 +896,7 @@ if (isset($_GET['hapus'])) {
                 <p>Tidak ada buku yang ditemukan sesuai pencarian Anda.</p>
             </div>
         </div>
+        
         <!-- Footer -->
         <div class="footer-card">
             <h2 class="footer-title"><i class="fas fa-code"></i> Oleh Akhmad Da'wah</h2>
@@ -464,6 +907,7 @@ if (isset($_GET['hapus'])) {
             </a>
         </div>
     </div>
+    
     <!-- Modal Tambah Buku -->
     <div class="modal-overlay" id="addModal">
         <div class="modal-content">
@@ -476,7 +920,7 @@ if (isset($_GET['hapus'])) {
                 </button>
             </div>
            
-            <form id="addBookForm" method="POST" action="index.php">
+            <form id="addBookForm" method="POST" action="index.php" enctype="multipart/form-data">
                 <input type="hidden" name="action" id="formAction" value="tambah">
                 <input type="hidden" name="old_kode" id="oldKode" value="">
                 <div class="form-group">
@@ -499,6 +943,18 @@ if (isset($_GET['hapus'])) {
                     <label class="form-label">Tahun Terbit <span>*</span></label>
                     <input type="number" class="form-input" name="tahun_terbit" id="inputTahun" placeholder="Contoh: 2024" min="1900" max="2099" required>
                 </div>
+                <div class="form-group">
+                    <label class="form-label">Cover Buku (Foto)</label>
+                    <div class="cover-upload-wrapper">
+                        <input type="file" class="form-input cover-input" name="cover_buku" id="coverInput" accept="image/jpeg,image/jpg,image/png,image/gif,image/webp" onchange="previewCover(event)">
+                        <small style="display:block; margin-top:8px; color:#64748b;">
+                            <i class="fas fa-info-circle"></i> Format: JPG, PNG, GIF, WEBP | Ukuran maks: 5MB
+                        </small>
+                        <div id="coverPreview" style="margin-top:15px; display:none;">
+                            <img id="previewImg" src="" alt="Preview" style="max-width:100%; max-height:200px; border-radius:10px; box-shadow:0 4px 15px rgba(0,0,0,0.2);">
+                        </div>
+                    </div>
+                </div>
                 <div class="form-actions">
                     <button type="button" class="btn-secondary" onclick="closeModal()">
                         <i class="fas fa-times-circle"></i> Batal
@@ -510,6 +966,7 @@ if (isset($_GET['hapus'])) {
             </form>
         </div>
     </div>
+    
     <!-- Modal Hapus -->
     <div class="modal-overlay" id="deleteModal">
         <div class="modal-content" style="max-width:400px; text-align:center;">
@@ -528,8 +985,94 @@ if (isset($_GET['hapus'])) {
             </div>
         </div>
     </div>
+    
+    <!-- ============================================
+         MODAL PREVIEW COVER - DI PERBAIKI
+         ============================================ -->
+    <div class="modal-preview-overlay" id="previewModal">
+        <div class="modal-preview-content">
+            <button class="btn-close-preview" onclick="closeCoverPreview()">
+                <i class="fas fa-times"></i>
+            </button>
+            <div class="preview-container">
+                <img id="previewCoverImage" src="" alt="Cover Preview" class="preview-cover-image">
+                <div class="preview-info">
+                    <h2 id="previewCoverTitle">Judul Buku</h2>
+                    <span class="preview-badge"><i class="fas fa-image"></i> Cover Buku</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <script>
-        // Dark Mode
+        // ============================================
+        // PREVIEW COVER IMAGE - FORM INPUT
+        // ============================================
+        function previewCover(event) {
+            const file = event.target.files[0];
+            const previewDiv = document.getElementById('coverPreview');
+            const previewImg = document.getElementById('previewImg');
+            
+            if (file && file.type.startsWith('image/')) {
+                // Validasi ukuran (max 5MB)
+                if (file.size > 5 * 1024 * 1024) {
+                    alert('Ukuran file terlalu besar! Maksimal 5MB.');
+                    event.target.value = '';
+                    previewDiv.style.display = 'none';
+                    return;
+                }
+                
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    previewImg.src = e.target.result;
+                    previewDiv.style.display = 'block';
+                };
+                reader.readAsDataURL(file);
+            } else {
+                previewDiv.style.display = 'none';
+            }
+        }
+        
+        // ============================================
+        // OPEN COVER PREVIEW MODAL
+        // ============================================
+        function openCoverPreview(coverSrc, bookTitle) {
+            const modal = document.getElementById('previewModal');
+            const img = document.getElementById('previewCoverImage');
+            const title = document.getElementById('previewCoverTitle');
+            
+            img.src = coverSrc;
+            title.textContent = bookTitle || 'Cover Buku';
+            modal.classList.add('active');
+            
+            // Prevent body scroll
+            document.body.style.overflow = 'hidden';
+        }
+        
+        // ============================================
+        // CLOSE COVER PREVIEW MODAL
+        // ============================================
+        function closeCoverPreview() {
+            const modal = document.getElementById('previewModal');
+            modal.classList.remove('active');
+            
+            // Reset src untuk mencegah flash image lama
+            setTimeout(() => {
+                document.getElementById('previewCoverImage').src = '';
+            }, 300);
+            
+            // Restore body scroll
+            document.body.style.overflow = '';
+        }
+        
+        // Close preview modal when clicking outside
+        document.getElementById('previewModal').addEventListener('click', function(e) {
+            if (e.target === this) closeCoverPreview();
+        });
+        
+        // ============================================
+        // DARK MODE
+        // ============================================
         function toggleDarkMode() {
             document.body.classList.toggle('dark-mode');
             const btn = document.getElementById('darkModeToggle');
@@ -539,23 +1082,24 @@ if (isset($_GET['hapus'])) {
                 btn.innerHTML = '<i class="fas fa-moon"></i><span>Dark Mode</span>';
             }
         }
-        // Mobile Mode
-        function toggleViewMode() {
-            document.body.classList.toggle('mobile-mode');
-        }
-        // Filter & Search
+        
+        // ============================================
+        // FILTER & SEARCH
+        // ============================================
         function filterTable() {
             const search = document.getElementById('searchInput').value.toLowerCase();
             const filter = document.getElementById('filterSelect').value.toLowerCase();
             const sort   = document.getElementById('sortSelect').value;
             const rows   = Array.from(document.querySelectorAll('#bookTableBody .book-row'));
             let visible = 0;
+            
             rows.forEach(row => {
-                const judul    = row.dataset.judul || '';
+                const judul     = row.dataset.judul || '';
                 const pengarang = row.dataset.pengarang || '';
-                const penerbit = row.dataset.penerbit || '';
+                const penerbit  = row.dataset.penerbit || '';
                 const matchSearch = judul.includes(search) || pengarang.includes(search) || penerbit.includes(search);
                 const matchFilter = filter === 'all' || penerbit === filter;
+                
                 if (matchSearch && matchFilter) {
                     row.style.display = '';
                     visible++;
@@ -563,6 +1107,7 @@ if (isset($_GET['hapus'])) {
                     row.style.display = 'none';
                 }
             });
+            
             // Sort
             const tbody = document.getElementById('bookTableBody');
             const sortedRows = rows.filter(r => r.style.display !== 'none').sort((a, b) => {
@@ -573,6 +1118,7 @@ if (isset($_GET['hapus'])) {
                 return 0;
             });
             sortedRows.forEach(r => tbody.appendChild(r));
+            
             // Update nomor urut
             let no = 1;
             rows.forEach(row => {
@@ -580,19 +1126,28 @@ if (isset($_GET['hapus'])) {
                     row.querySelector('.number-badge').textContent = no++;
                 }
             });
+            
             document.getElementById('resultCount').textContent = `Menampilkan ${visible} buku`;
             document.getElementById('noResult').style.display = visible === 0 ? 'block' : 'none';
         }
-        // Open Add Modal
+        
+        // ============================================
+        // OPEN ADD MODAL
+        // ============================================
         function openModal() {
             document.getElementById('modalTitle').innerHTML = '<i class="fas fa-book-medical"></i> Tambah Koleksi Baru';
             document.getElementById('saveBtn').innerHTML = '<i class="fas fa-save"></i> Simpan';
             document.getElementById('formAction').value = 'tambah';
             document.getElementById('oldKode').value = '';
             document.getElementById('addBookForm').reset();
+            document.getElementById('coverInput').value = '';
+            document.getElementById('coverPreview').style.display = 'none';
             document.getElementById('addModal').classList.add('active');
         }
-        // Open Edit Modal
+        
+        // ============================================
+        // OPEN EDIT MODAL
+        // ============================================
         function openEditModal(book) {
             document.getElementById('modalTitle').innerHTML = '<i class="fas fa-edit"></i> Edit Koleksi';
             document.getElementById('saveBtn').innerHTML = '<i class="fas fa-save"></i> Update';
@@ -603,20 +1158,31 @@ if (isset($_GET['hapus'])) {
             document.getElementById('inputPengarang').value = book.pengarang;
             document.getElementById('inputPenerbit').value = book.penerbit;
             document.getElementById('inputTahun').value = book.tahun_terbit;
+            
+            // Reset file input dan preview
+            document.getElementById('coverInput').value = '';
+            document.getElementById('coverPreview').style.display = 'none';
+            
             document.getElementById('addModal').classList.add('active');
         }
+        
         function closeModal() {
             document.getElementById('addModal').classList.remove('active');
         }
-        // Delete Confirmation
+        
+        // ============================================
+        // DELETE CONFIRMATION
+        // ============================================
         function confirmHapus(kode, judul) {
             document.getElementById('deleteBookTitle').textContent = judul;
             document.getElementById('deleteLink').href = 'index.php?hapus=' + kode;
             document.getElementById('deleteModal').classList.add('active');
         }
+        
         function closeDeleteModal() {
             document.getElementById('deleteModal').classList.remove('active');
         }
+        
         // Close modal when clicking outside
         document.getElementById('addModal').addEventListener('click', function(e) {
             if (e.target === this) closeModal();
@@ -624,7 +1190,19 @@ if (isset($_GET['hapus'])) {
         document.getElementById('deleteModal').addEventListener('click', function(e) {
             if (e.target === this) closeDeleteModal();
         });
-        // Toast Notification
+        
+        // Keyboard event - Close modals with ESC key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeModal();
+                closeDeleteModal();
+                closeCoverPreview();
+            }
+        });
+        
+        // ============================================
+        // TOAST NOTIFICATION
+        // ============================================
         function showToast(message, type = 'success') {
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
@@ -634,6 +1212,7 @@ if (isset($_GET['hapus'])) {
             container.appendChild(toast);
             setTimeout(() => { container.removeChild(toast); }, 3000);
         }
+        
         // Auto show toast from PHP redirect
         <?php if (isset($_GET['toast'])): ?>
             <?php if ($_GET['toast'] === 'tambah'): ?>

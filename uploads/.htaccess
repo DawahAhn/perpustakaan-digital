@@ -1,0 +1,13 @@
+# Folder uploads - Security
+# Hanya izinkan image files
+<FilesMatch "\.(jpg|jpeg|png|gif)$">
+    Allow from all
+</FilesMatch>
+
+# Block PHP execution di folder uploads
+<FilesMatch "\.php$">
+    Deny from all
+</FilesMatch>
+
+# Disable directory listing
+Options -Indexes
